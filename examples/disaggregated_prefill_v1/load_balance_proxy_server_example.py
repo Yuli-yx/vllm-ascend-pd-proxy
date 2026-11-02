@@ -684,6 +684,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decoder-ports", type=int, nargs="+", default=[8002])
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum number of retries for HTTP requests")
     parser.add_argument(
+        "--abnormal-request-dir",
+        default="abnormal_requests",
+        help="Directory for original Messages request bodies with abnormal prefill responses",
+    )
+    parser.add_argument(
         "--retry-delay", type=float, default=0.001, help="Base delay (seconds) for exponential backoff retries"
     )
     parser.add_argument(
@@ -820,6 +825,14 @@ def auth_headers(request_id: str) -> dict[str, str]:
         "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
         "X-Request-Id": request_id,
     }
+
+
+def save_abnormal_request(directory: str, body: bytes) -> str:
+    output_dir = Path(directory).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="wb", prefix="prefill-", suffix=".json", dir=output_dir, delete=False) as out:
+        out.write(body)
+        return out.name
 
 
 def build_prefill_request(req_data: dict) -> dict:
@@ -1003,17 +1016,25 @@ async def assign_instances(
                 (response_json.get("usage") or {}).get("output_tokens"),
             )
         if api == "/messages" and (response_json.get("stop_reason") == "end_turn" or not kv_transfer_params):
+            request_file = None
+            if original_request_body is not None:
+                try:
+                    request_file = await asyncio.to_thread(
+                        save_abnormal_request,
+                        getattr(args, "abnormal_request_dir", "abnormal_requests"),
+                        original_request_body,
+                    )
+                except OSError as exc:
+                    logger.error("Failed to save abnormal request: request_id=%s error=%s", request_id, exc)
             logger.warning(
                 "Prefill abnormal request: request_id=%s response_id=%s prefiller=%s "
-                "stop_reason=%r kv_transfer_params_present=%s original_request_body=%s",
+                "stop_reason=%r kv_transfer_params_present=%s request_file=%s",
                 request_id,
                 response_json.get("id"),
                 prefiller_key,
                 response_json.get("stop_reason"),
                 bool(kv_transfer_params),
-                json.dumps(original_request_body.decode("utf-8", errors="backslashreplace"), ensure_ascii=False)
-                if original_request_body is not None
-                else "null",
+                request_file,
             )
         if api == "/messages" and not kv_transfer_params:
             raise httpx.HTTPStatusError(
