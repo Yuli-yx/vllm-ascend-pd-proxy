@@ -987,6 +987,19 @@ async def assign_instances(
         )
         response_json = response.json()
         kv_transfer_params = response_json.get("kv_transfer_params")
+        if api == "/messages" and response_json.get("stop_reason") == "end_turn":
+            # Messages maps natural completion to end_turn, but does not
+            # expose the sampled token ID; this is an EOS candidate only.
+            logger.warning(
+                "Prefill EOS candidate: request_id=%s response_id=%s prefiller=%s "
+                "stop_reason=end_turn stop_sequence=%r kv_transfer_params_present=%s output_tokens=%s",
+                request_id,
+                response_json.get("id"),
+                prefiller_key,
+                response_json.get("stop_sequence"),
+                bool(kv_transfer_params),
+                (response_json.get("usage") or {}).get("output_tokens"),
+            )
         if api == "/messages" and not kv_transfer_params:
             raise httpx.HTTPStatusError(
                 "Messages prefill backend did not return KV transfer parameters",
