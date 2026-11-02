@@ -835,6 +835,7 @@ def build_prefill_request(req_data: dict) -> dict:
     payload["stream"] = False
     payload["max_tokens"] = 1
     payload["min_tokens"] = 1
+    payload["ignore_eos"] = True
     if "max_completion_tokens" in payload:
         payload["max_completion_tokens"] = 1
     payload.pop("stream_options", None)
