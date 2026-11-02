@@ -966,6 +966,7 @@ async def assign_instances(
     *,
     is_initial_request: bool,
     extra_headers: dict[str, str] | None = None,
+    original_request_body: bytes | None = None,
 ) -> InstanceInfo:
     runtime = get_runtime()
     args = get_global_args()
@@ -1000,6 +1001,19 @@ async def assign_instances(
                 response_json.get("stop_sequence"),
                 bool(kv_transfer_params),
                 (response_json.get("usage") or {}).get("output_tokens"),
+            )
+        if api == "/messages" and (response_json.get("stop_reason") == "end_turn" or not kv_transfer_params):
+            logger.warning(
+                "Prefill abnormal request: request_id=%s response_id=%s prefiller=%s "
+                "stop_reason=%r kv_transfer_params_present=%s original_request_body=%s",
+                request_id,
+                response_json.get("id"),
+                prefiller_key,
+                response_json.get("stop_reason"),
+                bool(kv_transfer_params),
+                json.dumps(original_request_body.decode("utf-8", errors="backslashreplace"), ensure_ascii=False)
+                if original_request_body is not None
+                else "null",
             )
         if api == "/messages" and not kv_transfer_params:
             raise httpx.HTTPStatusError(
@@ -1106,7 +1120,12 @@ async def handle_completions_impl(api: str, request: Request, extra_headers: dic
         req_body = await request.body()
         request_length = len(req_body)
         instance_info = await assign_instances(
-            api, req_data, request_length, is_initial_request=True, extra_headers=extra_headers
+            api,
+            req_data,
+            request_length,
+            is_initial_request=True,
+            extra_headers=extra_headers,
+            original_request_body=req_body if api == "/messages" else None,
         )
         stream_flag = bool(req_data.get("stream", False))
         chat_flag = "messages" in req_data
